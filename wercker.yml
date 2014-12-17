@@ -1,0 +1,33 @@
+box: attilaolah/godep
+
+deploy:
+    steps:
+        - tcnksm/ghr:
+            token: $GITHUB_TOKEN
+            input: dist
+            version: v0.0.1         # Relase tag default is `pre-release`
+            pre_release: true       # Relase as pre-release default is false
+            replace: true           # Replace release if it exists
+
+# Build definition
+build:
+  steps:
+    # Sets the go workspace and places you package
+    # at the right place in the workspace tree
+    - setup-go-workspace
+
+    - script: 
+        name: install ruby
+        code: | 
+          sudo apt-get install ruby
+
+    - script: 
+        name: install fpm
+        code: | 
+          sudo gem install fpm
+
+    - script: 
+        name: package app
+        code: | 
+          cd $WERCKER_SOURCE_DIR
+          make deb
