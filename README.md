@@ -37,9 +37,9 @@ logstash-forwarder is configured with a json file you specify with the -config f
 
 `logstash-forwarder -config yourstuff.json`
 
-Here's a sample, with comments in-line to describe the settings. Please please
-please keep in mind that comments are technically invalid in JSON, so you can't
-include them in your config.:
+Here's a sample, with comments in-line to describe the settings. Comments are
+invalid in JSON, but logstash-forwarder will strip them out for you if they're
+the only thing on the line:
 
     {
       # The network section covers network configuration :)
@@ -71,7 +71,7 @@ include them in your config.:
         # An array of hashes. Each hash tells what paths to watch and
         # what fields to annotate on events from those paths.
         {
-          "paths": [ 
+          "paths": [
             # single paths are fine
             "/var/log/messages",
             # globs are fine too, they will be periodically evaluated
@@ -93,6 +93,24 @@ include them in your config.:
         }
       ]
     }
+
+You can also read an entire directory of JSON configs by specifying a directory instead of a file with the `-config` option.
+
+# IMPORTANT TLS/SSL CERTIFICATE NOTES
+
+This program will reject SSL/TLS certificates which have a subject which does not match the `servers` value, for any given connection. For example, if you have `"servers": [ "foobar:12345" ]` then the 'foobar' server MUST use a certificate with subject or subject-alternative that includes `CN=foobar`. Wildcards are supported also for things like `CN=*.example.com`. If you use an IP address, such as `"servers": [ "1.2.3.4:12345" ]`, your ssl certificate MUST use an IP SAN with value "1.2.3.4". If you do not, the TLS handshake will FAIL and the lumberjack connection will close due to trust problems.
+
+Creating a correct SSL/TLS infrastructure is outside the scope of this document. 
+
+As a very poor example (largely due unpredictability in your system's defaults for openssl), you can try the following command as an example for creating a self-signed certificate/key pair for use with a server named "logstash.example.com":
+
+```
+openssl req -x509  -batch -nodes -newkey rsa:2048 -keyout lumberjack.key -out lumberjack.crt -subj /CN=logstash.example.com
+```
+
+logstash-forwarder needs the `.crt` file, and logstash will need both `.key` and `.crt` files.
+
+Again, creating a correct SSL/TLS certificate authority or generally doing certificate management is outside the scope of this document. 
 
 ### Goals
 
@@ -134,7 +152,7 @@ Or:
 
 If you don't use rpm or deb make targets as above, you can skip this section.
 
-Packages install to `/opt/logstash-forwarder`. 
+Packages install to `/opt/logstash-forwarder`.
 
 There are no run-time dependencies.
 
@@ -150,7 +168,7 @@ The config file is documented further up in this file.
 
 And also note that logstash-forwarder runs quietly when all is a-ok. If you want informational feedback, use the `verbose` flag to enable log emits to stdout.
 
-Fatal errors are always sent to stderr regardless of the `-verbose` command-line option and process exits with a non-zero status.
+Fatal errors are always sent to stderr regardless of the `-quiet` command-line option and process exits with a non-zero status.
 
 ### Key points
 
@@ -190,7 +208,7 @@ In logstash, you'll want to use the [lumberjack](http://logstash.net/docs/latest
       }
     }
 
-## Implementation details 
+## Implementation details
 
 Below is valid as of 2012/09/19
 
@@ -236,7 +254,7 @@ reliable transport of events.
 * HTTP is RPC and very high overhead for small events (uncompressable headers,
   etc). Streaming requires custom framing.
 
-## License 
+## License
 
 See LICENSE file.
 

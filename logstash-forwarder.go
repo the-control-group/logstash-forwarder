@@ -18,14 +18,13 @@ var exitStat = struct {
 }
 
 var options = &struct {
-	configFile          string
+	configArg           string
 	spoolSize           uint64
 	harvesterBufferSize int
 	cpuProfileFile      string
 	idleTimeout         time.Duration
 	useSyslog           bool
 	tailOnRotate        bool
-	debug               bool
 	quiet               bool
 }{
 	spoolSize:           1024,
@@ -35,15 +34,14 @@ var options = &struct {
 
 func emitOptions() {
 	emit("\t--- options -------\n")
-	emit("\tconfig-file:         %s\n", options.configFile)
+	emit("\tconfig-arg:          %s\n", options.configArg)
 	emit("\tidle-timeout:        %v\n", options.idleTimeout)
 	emit("\tspool-size:          %d\n", options.spoolSize)
 	emit("\tharvester-buff-size: %d\n", options.harvesterBufferSize)
 	emit("\t--- flags ---------\n")
 	emit("\ttail (on-rotation):  %t\n", options.tailOnRotate)
-	emit("\tuse-syslog:          %t\n", options.useSyslog)
-	emit("\tverbose:             %t\n", options.quiet)
-	emit("\tdebug:               %t\n", options.debug)
+	emit("\tlog-to-syslog:          %t\n", options.useSyslog)
+	emit("\tquiet:             %t\n", options.quiet)
 	if runProfiler() {
 		emit("\t--- profile run ---\n")
 		emit("\tcpu-profile-file:    %s\n", options.cpuProfileFile)
@@ -53,17 +51,15 @@ func emitOptions() {
 
 // exits with stat existStat.usageError if required options are not provided
 func assertRequiredOptions() {
-	if options.configFile == "" {
+	if options.configArg == "" {
 		exit(exitStat.usageError, "fatal: config file must be defined")
 	}
 }
 
 const logflags = log.Ldate | log.Ltime | log.Lmicroseconds
 
-var infolog *log.Logger
-
 func init() {
-	flag.StringVar(&options.configFile, "config", options.configFile, "path to logstash-forwarder configuration file")
+	flag.StringVar(&options.configArg, "config", options.configArg, "path to logstash-forwarder configuration file or directory")
 
 	flag.StringVar(&options.cpuProfileFile, "cpuprofile", options.cpuProfileFile, "path to cpu profile output - note: exits on profile end.")
 
@@ -79,14 +75,10 @@ func init() {
 	flag.BoolVar(&options.tailOnRotate, "tail", options.tailOnRotate, "always tail on log rotation -note: may skip entries ")
 	flag.BoolVar(&options.tailOnRotate, "t", options.tailOnRotate, "always tail on log rotation -note: may skip entries ")
 
-	flag.BoolVar(&options.quiet, "verbose", options.quiet, "operate in quiet mode - only emit errors to log")
-	flag.BoolVar(&options.quiet, "v", options.quiet, "operate in quiet mode - only emit errors to log")
-
-	flag.BoolVar(&options.debug, "debug", options.debug, "emit debg info (verbose must also be set)")
+	flag.BoolVar(&options.quiet, "quiet", options.quiet, "operate in quiet mode - only emit errors to log")
 }
 
 func init() {
-	infolog = log.New(os.Stdout, "", logflags)
 	log.SetFlags(logflags)
 }
 
@@ -101,6 +93,11 @@ func main() {
 	}()
 
 	flag.Parse()
+
+	if options.useSyslog {
+		configureSyslog()
+	}
+
 	assertRequiredOptions()
 	emitOptions()
 
@@ -110,17 +107,31 @@ func main() {
 			log.Fatal(err)
 		}
 		pprof.StartCPUProfile(f)
+		emit("Profiling enabled. I will collect profiling information and then exit in 60 seconds.")
 		go func() {
 			time.Sleep(60 * time.Second)
 			pprof.StopCPUProfile()
-			panic("done")
+			panic("60-seconds of profiling is complete. Shutting down.")
 		}()
 	}
 
-	config, e := LoadConfig(options.configFile)
-	if e != nil {
-		fault("on LoadConfig: %s\n", e.Error())
+	config_files, err := DiscoverConfigs(options.configArg)
+	if err != nil {
+		fault("Could not use -config of '%s': %s", options.configArg, err)
 	}
+
+	var config Config
+
+	for _, filename := range config_files {
+		additional_config, err := LoadConfig(filename)
+		if err == nil {
+			err = MergeConfig(&config, additional_config)
+		}
+		if err != nil {
+			fault("Could not load config file %s: %s", filename, err)
+		}
+	}
+	FinalizeConfig(&config)
 
 	event_chan := make(chan *FileEvent, 16)
 	publisher_chan := make(chan []*FileEvent, 1)
@@ -138,11 +149,6 @@ func main() {
 	// - registrar: records positions of files read
 	// Finally, prospector uses the registrar information, on restart, to
 	// determine where in each file to restart a harvester.
-
-//	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-	if options.useSyslog {
-		configureSyslog()
-	}
 
 	restart := &ProspectorResume{}
 	restart.persist = make(chan *FileState)
@@ -203,7 +209,7 @@ func emit(msgfmt string, args ...interface{}) {
 	if options.quiet {
 		return
 	}
-	infolog.Printf(msgfmt, args...)
+	log.Printf(msgfmt, args...)
 }
 
 func fault(msgfmt string, args ...interface{}) {
